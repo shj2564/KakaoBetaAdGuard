@@ -1,0 +1,35 @@
+# Build outputs and caches
+**/.vs/
+**/Debug/
+src/**/Release/
+src/**/x64/
+src/**/bin/
+**/obj/
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.aps
+*.exe.config
+*.vcxproj.user
+*.suo
+*.db
+*.db-shm
+*.db-wal
+
+# Operational data and secrets
+*.log
+*.dmp
+*.dump
+*.pcap
+*.pcapng
+.env
+.env.*
+*.pem
+*.pfx
+*.key
+*.token
+*.screenshot.png
+__pycache__/
+.DS_Store
+Thumbs.db
