@@ -6,6 +6,7 @@
 #include <string>
 #include <winhttp.h>
 #include <tlhelp32.h>
+#include <vector>
 #pragma comment(lib, "winhttp.lib")
 
 // Global variables
@@ -34,6 +35,7 @@ BOOL             ToggleUpdateBannerAdRegistry(HWND hWnd);
 BOOL             CheckStartup(HINSTANCE hInst, HWND hWnd);
 VOID             RestoreBetaBanner();
 BOOL             CreateTrayIcon(HWND hWnd, NOTIFYICONDATA* nid);
+static bool EnsureBundledQt6Layout(wchar_t* outPath, size_t capacity);
 BOOL             DeleteTrayIcon(NOTIFYICONDATA nid);
 VOID             ShowContextMenu(HWND hwnd, POINT pt);
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -43,9 +45,7 @@ std::wstring     GetLatestReleaseTag(const std::wstring& owner, const std::wstri
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR lpCmdLine, _In_ int nCmdShow) {
 	// Parse command-line
-	if (lpCmdLine != L"") {
-		szCmdLine = lpCmdLine;
-	}
+	szCmdLine = lpCmdLine;
 	
 	// Load resources
 	LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
@@ -92,160 +92,100 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow) {
 	return TRUE;
 }
 
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) { // Called by kernel
-	static HANDLE hTimer;
-	static WCHAR appName[64];
-	BOOL bClose = FALSE;
-	BOOL bRestoretray = FALSE;
-
-	switch (message) {
-	case WM_CREATE:
-		// Preprocess arguments
-		if (lstrcmpW(szCmdLine, L"--startup") == 0) {
-			bPortable = false;
-		} else if (lstrcmpW(szCmdLine, L"--restore_tray") == 0) {
-			bRestoretray = TRUE;
-			HKEY key; DWORD dwDisp;
-			if (RegCreateKeyEx(HKEY_CURRENT_USER, REG_CFG, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &key, &dwDisp) == ERROR_SUCCESS) {
-				DWORD value = 0;
-				RegSetValueExW(key, L"HideTrayIcon", 0, REG_DWORD, (const BYTE*) &value, sizeof(value));
-				RegCloseKey(key);
-			}
-			HWND hKakaoTalkAdGuardMain = FindWindow(L"KakaoTalkAdGuard", NULL);
-			if (hKakaoTalkAdGuardMain) {
-				SendMessage(hKakaoTalkAdGuardMain, WM_RECHECK, NULL, NULL);
-			}
-			PostQuitMessage(0);
-		}
-
-		bClose = CheckMultipleExecution(hInst, hWnd, szWindowClass);
-		hTimer = (HANDLE) SetTimer(hWnd, 1, updateRate, (TIMERPROC) TimerProc);
-		CheckStartup(hInst, hWnd);
-		if (!hideTrayIcon && !bClose && !bRestoretray) {
-			CreateTrayIcon(hWnd, &nid);
-		}
-		break;
-	case WM_NOTIFYCALLBACK:
-		switch (LOWORD(lParam)) {
-		case NIN_SELECT:
-		case WM_CONTEXTMENU:
-		{
-			POINT const pt = {LOWORD(wParam), HIWORD(wParam)};
-			ShowContextMenu(hWnd, pt);
-		}
-		break;
-		}
-		break;
-	case WM_RECHECK:
-		CheckStartup(hInst, hWnd);
-		if (!hideTrayIcon) {
-			CreateTrayIcon(hWnd, &nid);
-		}
-		break;
-	case WM_INITMENU:
-		CheckMenuItem((HMENU)wParam, IDM_STARTONSYSTEMSTARTUP, MF_BYCOMMAND | (autoStartup ? MF_CHECKED : MF_UNCHECKED));
-		CheckMenuItem((HMENU)wParam, IDM_CHECKUPDATE, MF_BYCOMMAND | (bCheckUpdate ? MF_CHECKED : MF_UNCHECKED));
-		CheckMenuItem((HMENU)wParam, IDM_HIDEMAINPANNELAD, MF_BYCOMMAND | (bHideMainPannelAd ? MF_CHECKED : MF_UNCHECKED));
-		CheckMenuItem((HMENU)wParam, IDM_UPDATEBANNERADREGISTRY, MF_BYCOMMAND | (bUpdateBannerAdRegistry ? MF_CHECKED : MF_UNCHECKED));
-
-	case WM_COMMAND:
-	{
-		switch (LOWORD(wParam)) {
-		case IDM_HIDETRAYICON:
-			HideTrayIcon(hInst, hWnd, nid);
-			break;
-		case IDM_STARTONSYSTEMSTARTUP:
-			ToggleStartup(hWnd);
-			break;
-		case IDM_CHECKUPDATE:
-			ToggleCheckUpdate(hWnd);
-			break;
-		case IDM_HIDEMAINPANNELAD:
-			ToggleHideMainPannelAd(hWnd);
-			break;
-		case IDM_UPDATEBANNERADREGISTRY:
-			ToggleUpdateBannerAdRegistry(hWnd);
-			break;
-		case IDM_EXIT:
-			DestroyWindow(hWnd);
-			break;
-		default:
-			return DefWindowProc(hWnd, message, wParam, lParam);
-		}
-	}
-	break;
-	case WM_DESTROY:
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_CREATE:
+        if (lstrcmpW(szCmdLine, L"--restore_tray") == 0) {
+            HKEY key=nullptr;
+            if (RegCreateKeyExW(HKEY_CURRENT_USER,REG_CFG,0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)==ERROR_SUCCESS) {
+                DWORD enabled=0;
+                RegSetValueExW(key,L"HideTrayIcon",0,REG_DWORD,(const BYTE*)&enabled,sizeof(enabled));
+                RegCloseKey(key);
+            }
+            HWND existing=FindWindowW(L"KAKAOTALKADGUARD",nullptr);
+            if(existing)PostMessageW(existing,WM_RECHECK,0,0);
+            PostQuitMessage(0);
+            return 0;
+        }
+        if (CheckMultipleExecution(hInst,hWnd,szWindowClass)) return 0;
+        CheckStartup(hInst,hWnd);
+        SetTimer(hWnd,1,updateRate,(TIMERPROC)TimerProc);
+        if(!hideTrayIcon)CreateTrayIcon(hWnd,&nid);
+        return 0;
+    case WM_NOTIFYCALLBACK:
+        if(LOWORD(lParam)==WM_CONTEXTMENU || LOWORD(lParam)==WM_RBUTTONUP ||
+            LOWORD(lParam)==NIN_SELECT) {
+            POINT pt={0,0};GetCursorPos(&pt);
+            ShowContextMenu(hWnd,pt);
+        }
+        return 0;
+    case WM_RECHECK: {
+        // Re-running the single EXE makes a previously hidden tray icon visible.
+        HKEY key=nullptr;
+        if(RegCreateKeyExW(HKEY_CURRENT_USER,REG_CFG,0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)==ERROR_SUCCESS) {
+            DWORD enabled=0;
+            RegSetValueExW(key,L"HideTrayIcon",0,REG_DWORD,(const BYTE*)&enabled,sizeof(enabled));
+            RegCloseKey(key);
+        }
+        if(hideTrayIcon) {hideTrayIcon=false;CreateTrayIcon(hWnd,&nid);}
+        return 0;
+    }
+    case WM_COMMAND:
+        switch(LOWORD(wParam)) {
+        case IDM_STARTONSYSTEMSTARTUP: ToggleStartup(hWnd); return 0;
+        case IDM_HIDEMAINPANNELAD: ToggleHideMainPannelAd(hWnd); return 0;
+        case IDM_HIDETRAYICON: HideTrayIcon(hInst,hWnd,nid); return 0;
+        case IDM_EXIT: DestroyWindow(hWnd); return 0;
+        }
+        return DefWindowProcW(hWnd,message,wParam,lParam);
+    case WM_DESTROY:
         RestoreBetaBanner();
-		KillTimer(hWnd, 1);
-		DeleteTrayIcon(nid);
-		PostQuitMessage(0);
-		break;
-	default:
-		return DefWindowProc(hWnd, message, wParam, lParam);
-	}
-	return 0;
+        KillTimer(hWnd,1);
+        DeleteTrayIcon(nid);
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcW(hWnd,message,wParam,lParam);
 }
 
-BOOL CheckStartup(HINSTANCE hInst, HWND hWnd) {
-	// Check autoruns
-	HKEY key; DWORD dwDisp;
-	RegCreateKeyEx(HKEY_CURRENT_USER, REG_RUN, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &key, &dwDisp);
-	autoStartup = (RegQueryValueExW(key, L"KakaoTalkAdGuard", 0, NULL, 0, NULL) == NO_ERROR);
-	RegCloseKey(key);
-	SendMessage(hWnd, WM_INITMENU, 0, 0);
-	
-	// Check HideTrayIcon
-	RegCreateKeyEx(HKEY_CURRENT_USER, REG_CFG, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_READ, NULL, &key, &dwDisp);
-	DWORD dwType = REG_DWORD;
-	DWORD dwDataSize = sizeof(DWORD);
-	DWORD dwValue = 0;
-	hideTrayIcon = (RegQueryValueExW(key, L"HideTrayIcon", 0, &dwType, (LPBYTE)&dwValue, &dwDataSize) == ERROR_SUCCESS && dwValue != 0);
-	bCheckUpdate = (RegQueryValueExW(key, L"CheckUpdate", 0, &dwType, (LPBYTE)&dwValue, &dwDataSize) == ERROR_SUCCESS && dwValue != 0);
-	// Default to enabled on this Qt6 beta fork; preserve user's explicit setting.
-    LSTATUS adOptionStatus = RegQueryValueExW(key, L"HideMainPannelAd", 0, &dwType, (LPBYTE)&dwValue, &dwDataSize);
-    bHideMainPannelAd = (adOptionStatus == ERROR_SUCCESS) ? (dwValue != 0) : TRUE;
-	bUpdateBannerAdRegistry = (RegQueryValueExW(key, L"UpdateBannerAdRegistry", 0, &dwType, (LPBYTE)&dwValue, &dwDataSize) == ERROR_SUCCESS && dwValue != 0);
-
-	RegCloseKey(key);
-
-	// Check updates
-	if (bCheckUpdate) {
-		std::wstring latest = GetLatestReleaseTag(L"loopback-kr", L"KakaoTalkAdGuard");
-		if (!latest.empty()) {
-			WCHAR buffer[256] = { 0 };
-			int len = LoadStringW(GetModuleHandle(NULL), IDS_APP_VERSION, buffer, _countof(buffer));
-			std::wstring current = std::wstring(buffer, len);
-
-			if (latest != current) {
-				/*NOTIFYICONDATA nid = { sizeof(nid) };
-				nid.uFlags = NIF_INFO;
-				nid.dwInfoFlags = NIIF_INFO;
-				LoadStringW(hInst, IDS_NEWUPDATE_TITLE, nid.szInfoTitle, ARRAYSIZE(nid.szInfoTitle));
-				LoadStringW(hInst, IDS_NEWUPDATE_CONTENT, nid.szInfo, ARRAYSIZE(nid.szInfo));*/
-				std::wstring msg = L"New update released.\n\nCurrent version: " + current + L"\nLatest version: " + latest + L"\n\n"
-					L"Do you want to open the release website?";
-				int ret = MessageBoxW(hWnd, msg.c_str(), L"KakaoTalk AdGuard",
-					MB_YESNO | MB_ICONQUESTION);
-
-				if (ret == IDYES) {
-					ShellExecuteW(NULL, L"open", L"https://github.com/loopback-kr/KakaoTalkAdGuard/releases", NULL, NULL, SW_SHOWNORMAL);
-				}
-			}
-		}
-	}
-
-	return 0;
+BOOL CheckStartup(HINSTANCE, HWND) {
+    HKEY key=nullptr;
+    autoStartup=false;
+    wchar_t self[MAX_PATH]={};GetModuleFileNameW(nullptr,self,MAX_PATH);
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,REG_RUN,0,KEY_QUERY_VALUE,&key)==ERROR_SUCCESS) {
+        wchar_t value[2048]={};DWORD type=0,sz=sizeof(value);
+        if(RegQueryValueExW(key,L"SoNG-KakaoBetaAdGuard",nullptr,&type,(BYTE*)value,&sz)==ERROR_SUCCESS && type==REG_SZ) {
+            std::wstring entry(value);
+            autoStartup=(entry.find(self)!=std::wstring::npos);
+        }
+        RegCloseKey(key);
+    }
+    hideTrayIcon=false;
+    bHideMainPannelAd=true;
+    bCheckUpdate=false;
+    bUpdateBannerAdRegistry=false;
+    if(RegOpenKeyExW(HKEY_CURRENT_USER,REG_CFG,0,KEY_QUERY_VALUE,&key)==ERROR_SUCCESS) {
+        DWORD val=0,type=0,sz=sizeof(val);
+        if(RegQueryValueExW(key,L"HideTrayIcon",nullptr,&type,(BYTE*)&val,&sz)==ERROR_SUCCESS && type==REG_DWORD)
+            hideTrayIcon=(val!=0);
+        val=1;sz=sizeof(val);type=0;
+        if(RegQueryValueExW(key,L"HideMainPannelAd",nullptr,&type,(BYTE*)&val,&sz)==ERROR_SUCCESS && type==REG_DWORD)
+            bHideMainPannelAd=(val!=0);
+        RegCloseKey(key);
+    }
+    return TRUE;
 }
 
-BOOL ToggleHideMainPannelAd(HWND hWnd) {
-	DWORD dwValue = 0; DWORD dwType = REG_DWORD; HKEY key; DWORD dwDisp; BOOL regHideMainPannelAd; DWORD dwDataSize = sizeof(DWORD);
-	RegCreateKeyEx(HKEY_CURRENT_USER, REG_CFG, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &key, &dwDisp);
-	regHideMainPannelAd = (RegQueryValueExW(key, L"HideMainPannelAd", 0, &dwType, (LPBYTE)&dwValue, &dwDataSize) == ERROR_SUCCESS && dwValue != 0);
-	bHideMainPannelAd = not regHideMainPannelAd;
+BOOL ToggleHideMainPannelAd(HWND) {
+    bHideMainPannelAd=!bHideMainPannelAd;
+    HKEY key=nullptr;
+    if(RegCreateKeyExW(HKEY_CURRENT_USER,REG_CFG,0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)==ERROR_SUCCESS) {
+        DWORD v=bHideMainPannelAd?1:0;
+        RegSetValueExW(key,L"HideMainPannelAd",0,REG_DWORD,(const BYTE*)&v,sizeof(v));
+        RegCloseKey(key);
+    }
     if(!bHideMainPannelAd)RestoreBetaBanner();
-	RegSetValueExW(key, L"HideMainPannelAd", 0, REG_DWORD, (const BYTE*)&bHideMainPannelAd, sizeof(bHideMainPannelAd));
-	RegCloseKey(key);
-	return 0;
+    return TRUE;
 }
 BOOL ToggleUpdateBannerAdRegistry(HWND hWnd) {
 	DWORD dwValue = 0; DWORD dwType = REG_DWORD; HKEY key; DWORD dwDisp; BOOL regUpdateBannerAdRegistry; DWORD dwDataSize = sizeof(DWORD);
@@ -267,52 +207,77 @@ BOOL ToggleCheckUpdate(HWND hWnd) {
 	return 0;
 }
 
-BOOL ToggleStartup(HWND hWnd) {
-	HKEY key; DWORD dwDisp;
-	RegCreateKeyEx(HKEY_CURRENT_USER, REG_RUN, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &key, &dwDisp);
-
-	if (RegQueryValueExW(key, L"KakaoTalkAdGuard", 0, NULL, 0, NULL) == NO_ERROR) {
-		RegDeleteValueW(key, L"KakaoTalkAdGuard");
-		autoStartup = false;
-	} else {
-		WCHAR szFileName[MAX_PATH];
-		WCHAR szFileNameFinal[MAX_PATH] = L"\"";
-		GetModuleFileName(NULL, szFileName, MAX_PATH);
-		lstrcatW(szFileNameFinal, szFileName);
-		lstrcatW(szFileNameFinal, L"\"");
-		lstrcatW(szFileNameFinal, L" --startup");
-		RegSetValueExW(key, L"KakaoTalkAdGuard", 0, REG_SZ, (LPBYTE) szFileNameFinal, (lstrlenW(szFileNameFinal) + 1) * sizeof(WCHAR));
-		autoStartup = true;
-	}
-	RegCloseKey(key);
-	return 0;
+BOOL ToggleStartup(HWND) {
+    HKEY key=nullptr;
+    if(RegCreateKeyExW(HKEY_CURRENT_USER,REG_RUN,0,nullptr,0,KEY_QUERY_VALUE|KEY_SET_VALUE,nullptr,&key,nullptr)!=ERROR_SUCCESS)return FALSE;
+    if(autoStartup) {
+        RegDeleteValueW(key,L"SoNG-KakaoBetaAdGuard");
+        autoStartup=false;
+    } else {
+        wchar_t path[MAX_PATH]={};GetModuleFileNameW(nullptr,path,MAX_PATH);
+        std::wstring cmd=L"\""+std::wstring(path)+L"\" --startup";
+        if(RegSetValueExW(key,L"SoNG-KakaoBetaAdGuard",0,REG_SZ,
+                (const BYTE*)cmd.c_str(),(DWORD)((cmd.size()+1)*sizeof(wchar_t)))==ERROR_SUCCESS) {
+            // Retire only the legacy guard's own autorun registration.
+            wchar_t legacy[2048]={};DWORD type=0,sz=sizeof(legacy);
+            if(RegQueryValueExW(key,L"KakaoTalkAdGuard",nullptr,&type,(BYTE*)legacy,&sz)==ERROR_SUCCESS &&
+               wcsstr(legacy,L"KakaoTalkAdGuard-Qt6Beta.exe"))RegDeleteValueW(key,L"KakaoTalkAdGuard");
+            autoStartup=true;
+        }
+    }
+    RegCloseKey(key);
+    return TRUE;
 }
 
-BOOL HideTrayIcon(HINSTANCE hInst, HWND hWnd, NOTIFYICONDATA nid) {
-	WCHAR msgboxHideTray[MAX_LOADSTRING];
-	LoadStringW(hInst, IDS_MSGBOX_HIDETRAY, msgboxHideTray, MAX_LOADSTRING);
-	MessageBox(hWnd, msgboxHideTray, NULL, MB_ICONWARNING);
-	HKEY key; DWORD dwDisp;
-	LSTATUS ret;
-	if (RegCreateKeyEx(HKEY_CURRENT_USER, REG_CFG, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &key, &dwDisp) == ERROR_SUCCESS) {
-		DWORD value = 1;
-		ret = RegSetValueExW(key, L"HideTrayIcon", 0, REG_DWORD, (const BYTE*) &value, sizeof(value));
-		RegCloseKey(key);
-	}
-	DeleteTrayIcon(nid);
-	return 0;
+BOOL HideTrayIcon(HINSTANCE, HWND hWnd, NOTIFYICONDATA icon) {
+    int confirm=MessageBoxW(hWnd,
+        L"트레이 아이콘을 숨기면 이 메뉴도 보이지 않습니다.\n아이콘을 다시 표시하려면 실행 파일을 한 번 더 실행하세요.\n\n숨기시겠습니까?",
+        L"SoNG Kakao Beta AdGuard",MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2);
+    if(confirm!=IDYES)return FALSE;
+    HKEY key=nullptr;
+    if(RegCreateKeyExW(HKEY_CURRENT_USER,REG_CFG,0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)==ERROR_SUCCESS){
+        DWORD hidden=1;RegSetValueExW(key,L"HideTrayIcon",0,REG_DWORD,(const BYTE*)&hidden,sizeof(hidden));
+        RegCloseKey(key);
+    }
+    hideTrayIcon=true;
+    DeleteTrayIcon(icon);
+    return TRUE;
 }
 
-BOOL CheckMultipleExecution(HINSTANCE hInst, HWND hWnd, WCHAR szWindowClass[MAX_LOADSTRING]) {
-	CreateMutex(NULL, TRUE, szWindowClass);
-	if (GetLastError() == ERROR_ALREADY_EXISTS) {
-		WCHAR msgboxIsRunning[MAX_LOADSTRING];
-		LoadStringW(hInst, IDS_MSGBOX_ISRUNNING, msgboxIsRunning, MAX_LOADSTRING);
-		MessageBox(hWnd, msgboxIsRunning, NULL, MB_ICONWARNING);
-		PostQuitMessage(0);
-		return 1;
-	}
-	return 0;
+static bool IsLegacyGuardRunning() {
+    HANDLE snap=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+    if(snap==INVALID_HANDLE_VALUE)return false;
+    PROCESSENTRY32W item={};item.dwSize=sizeof(item);
+    bool found=false;
+    if(Process32FirstW(snap,&item)) {
+        do {
+            if(item.th32ProcessID!=GetCurrentProcessId() &&
+               _wcsicmp(item.szExeFile,L"KakaoTalkAdGuard-Qt6Beta.exe")==0) {
+                found=true;break;
+            }
+        } while(Process32NextW(snap,&item));
+    }
+    CloseHandle(snap);
+    return found;
+}
+BOOL CheckMultipleExecution(HINSTANCE, HWND hwnd, WCHAR className[MAX_LOADSTRING]) {
+    HANDLE mutex=CreateMutexW(nullptr,TRUE,L"Local\\SoNG-KakaoBetaAdGuard-Qt6");
+    if(mutex && GetLastError()==ERROR_ALREADY_EXISTS) {
+        HWND existing=FindWindowW(className,nullptr);
+        if(existing)PostMessageW(existing,WM_RECHECK,0,0);
+        CloseHandle(mutex);
+        PostQuitMessage(0);
+        return TRUE;
+    }
+    if(IsLegacyGuardRunning()) {
+        MessageBoxW(hwnd,L"기존 KakaoTalkAdGuard-Qt6Beta.exe가 실행 중입니다.\n"
+            L"기존 가드를 트레이 메뉴에서 종료한 후 SoNG 단일 EXE를 다시 실행하세요.",
+            L"SoNG Kakao Beta AdGuard",MB_OK|MB_ICONINFORMATION);
+        if(mutex)CloseHandle(mutex);
+        PostQuitMessage(0);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 BOOL CreateTrayIcon(HWND hWnd, NOTIFYICONDATA* nid) {
@@ -331,35 +296,23 @@ BOOL DeleteTrayIcon(NOTIFYICONDATA nid) {
 }
 
 void ShowContextMenu(HWND hwnd, POINT pt) {
-	HMENU hMenu;
-	WCHAR szAppName[MAX_LOADSTRING];
-	WCHAR szVersion[MAX_LOADSTRING];
-	WCHAR szFullAppName[MAX_LOADSTRING];
-	szFullAppName[0] = L'\0';
-	LoadStringW(hInst, IDS_APP_NAME, szAppName, MAX_LOADSTRING);
-	LoadStringW(hInst, IDS_APP_VERSION, szVersion, MAX_LOADSTRING);
-	wcscpy_s(szFullAppName, szAppName);
-	wcscat_s(szFullAppName, L" ");
-	wcscat_s(szFullAppName, szVersion);
-
-	if (bPortable) {
-		hMenu = LoadMenu(hInst, MAKEINTRESOURCE(IDR_TRAY_CONTEXTMENU_PORTABLE));
-		ModifyMenuW(hMenu, ID__APP_TITLE, MF_BYCOMMAND | MF_STRING | MF_DISABLED, ID__APP_TITLE, (LPCWSTR) szFullAppName);
-	} else {
-		hMenu = LoadMenu(hInst, MAKEINTRESOURCE(IDR_TRAY_CONTEXTMENU));
-		ModifyMenuW(hMenu, ID__APP_TITLE, MF_BYCOMMAND | MF_STRING | MF_DISABLED, ID__APP_TITLE, (LPCWSTR)szFullAppName);
-	}
-	HMENU hSubMenu = GetSubMenu(hMenu, 0);
-	SetForegroundWindow(hwnd); // our window must be foreground before calling TrackPopupMenu or the menu will not disappear when the user clicks away
-	// respect menu drop alignment
-	UINT uFlags = TPM_RIGHTBUTTON;
-	if (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0) {
-		uFlags |= TPM_RIGHTALIGN;
-	} else {
-		uFlags |= TPM_LEFTALIGN;
-	}
-	TrackPopupMenuEx(hSubMenu, uFlags, pt.x, pt.y, hwnd, NULL);
-	DestroyMenu(hMenu);
+    HMENU menu=CreatePopupMenu();
+    if(!menu)return;
+    AppendMenuW(menu,MF_STRING|MF_GRAYED,0,L"SoNG Kakao Beta AdGuard  v1.4.0");
+    AppendMenuW(menu,MF_STRING|MF_GRAYED,0,L"제작자 : SoNG");
+    AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+    AppendMenuW(menu,MF_STRING | (bHideMainPannelAd?MF_CHECKED:MF_UNCHECKED),
+        IDM_HIDEMAINPANNELAD,L"광고차단 시작  ON / OFF");
+    AppendMenuW(menu,MF_STRING | (autoStartup?MF_CHECKED:MF_UNCHECKED),
+        IDM_STARTONSYSTEMSTARTUP,L"Windows 자동실행  ON / OFF");
+    AppendMenuW(menu,MF_STRING | (!hideTrayIcon?MF_CHECKED:MF_UNCHECKED),
+        IDM_HIDETRAYICON,L"트레이 아이콘 표시  ON / OFF");
+    AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+    AppendMenuW(menu,MF_STRING,IDM_EXIT,L"종료");
+    SetForegroundWindow(hwnd);
+    TrackPopupMenuEx(menu,TPM_RIGHTBUTTON|TPM_LEFTALIGN,pt.x,pt.y,hwnd,nullptr);
+    PostMessageW(hwnd,WM_NULL,0,0);
+    DestroyMenu(menu);
 }
 
 HWND hKakaoTalkMain;
@@ -626,6 +579,55 @@ VOID RestoreBetaVisual();
 // separator are hidden inside the KakaoTalk GUI thread. Qt ColumnLayout then
 // gives the complete original 677px main content height to StackView.
 // This does NOT enlarge, clip, or overlay the KakaoTalk window.
+// Single-file distribution: the verified Qt6 hook is bundled as an RCDATA
+// Windows SetWindowsHookEx requires an on-disk DLL, so extract it at runtime.
+static bool EnsureBundledQt6Layout(wchar_t* outPath, size_t capacity) {
+    HRSRC res=FindResourceW(hInst,MAKEINTRESOURCEW(IDR_QT6_LAYOUT_DLL),RT_RCDATA);
+    if(!res)return false;
+    HGLOBAL glob=LoadResource(hInst,res);
+    if(!glob)return false;
+    const BYTE* bytes=(const BYTE*)LockResource(glob);
+    DWORD len=SizeofResource(hInst,res);
+    if(!bytes || len<4096)return false;
+    wchar_t appdata[MAX_PATH]={};
+    DWORD n=GetEnvironmentVariableW(L"LOCALAPPDATA",appdata,MAX_PATH);
+    if(!n || n>=MAX_PATH)return false;
+    std::wstring base=std::wstring(appdata)+L"\\SoNG-KakaoBetaAdGuard";
+    CreateDirectoryW(base.c_str(),nullptr);
+    base+=L"\\Runtime";
+    CreateDirectoryW(base.c_str(),nullptr);
+    base+=L"\\v1.4.0";
+    CreateDirectoryW(base.c_str(),nullptr);
+    std::wstring full=base+L"\\SoNGQt6Layout.dll";
+    if(full.size()+1>capacity)return false;
+    bool identical=false;
+    HANDLE f=CreateFileW(full.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_DELETE,
+        nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(f!=INVALID_HANDLE_VALUE) {
+        LARGE_INTEGER size={};
+        if(GetFileSizeEx(f,&size) && size.QuadPart==len) {
+            identical=true;
+            BYTE chunk[4096];DWORD got=0;
+            for(DWORD pos=0;pos<len;pos+=sizeof(chunk)){
+                DWORD need=(DWORD)min((DWORD)sizeof(chunk),len-pos);
+                if(!ReadFile(f,chunk,need,&got,nullptr) || got!=need ||
+                   memcmp(chunk,bytes+pos,need)!=0){identical=false;break;}
+            }
+        }
+        CloseHandle(f);
+    }
+    if(!identical) {
+        f=CreateFileW(full.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(f==INVALID_HANDLE_VALUE)return false;
+        DWORD written=0;
+        bool success=WriteFile(f,bytes,len,&written,nullptr) && written==len;
+        CloseHandle(f);
+        if(!success){DeleteFileW(full.c_str());return false;}
+    }
+    wcscpy_s(outPath,capacity,full.c_str());
+    return true;
+}
+
 static HMODULE gQtLayoutModule=nullptr;
 static HHOOK gQtLayoutHook=nullptr;
 static HWND gQtLayoutMain=nullptr;
@@ -652,14 +654,9 @@ static void EnsureQt6LayoutHook(HWND mainWindow) {
     return;
  }
  if(gQtLayoutHook)StopQt6LayoutHook();
- wchar_t self[MAX_PATH]={};
- if(!GetModuleFileNameW(nullptr,self,MAX_PATH))return;
- std::wstring libPath(self);
- auto slash=libPath.find_last_of(L"\\/");
- if(slash==std::wstring::npos)return;
- libPath.resize(slash+1);
- libPath+=L"SoNGQt6Layout.dll";
- HMODULE dll=LoadLibraryW(libPath.c_str());
+ wchar_t libPath[MAX_PATH]={};
+ if(!EnsureBundledQt6Layout(libPath,MAX_PATH))return;
+ HMODULE dll=LoadLibraryW(libPath);
  if(!dll)return;
  auto callback=(HOOKPROC)GetProcAddress(dll,"QtProbeHook");
  DWORD process=0;

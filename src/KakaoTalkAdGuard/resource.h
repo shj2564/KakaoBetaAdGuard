@@ -52,3 +52,7 @@
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
 #endif
+
+#define IDR_QT6_LAYOUT_DLL 500
+
+#define IDR_MIT_LICENSE 501

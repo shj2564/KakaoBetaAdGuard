@@ -1,3 +1,19 @@
+# SoNG Kakao Beta AdGuard
+
+## 최신 배포: v1.4.0 단일 EXE (2026-11-11)
+
+**제작자: SoNG**
+
+- [Windows x64 단일 EXE](release/single-exe/SoNG-KakaoBetaAdGuard_v1.4.0_Win64.exe)
+- [Windows x64 ZIP — EXE 한 파일만 포함](release/single-exe/SoNG-KakaoBetaAdGuard_v1.4.0_Win64.zip)
+- [v1.4.0 기능, 실행 및 검증 안내](docs/SINGLE_EXE.md)
+
+트레이 우클릭 메뉴에서 **광고차단 ON/OFF**, **Windows 자동실행 ON/OFF**, **트레이 아이콘 표시 ON/OFF**를 각각 설정합니다. 프로그램 아이콘과 Qt6 보조 DLL을 EXE 안에 포함했습니다. Qt6 후크는 실행 중 DLL을 로컬 앱 데이터 폴더에 추출해 사용합니다.
+
+**기존 v1.3 트레이 프로그램은 먼저 종료**하고 신버전 EXE를 실행하세요. 아래 v1.3 문서/성공본도 유지합니다.
+
+---
+
 # KakaoBetaAdGuard — Qt6 Beta Full-Height AdGuard
 
 > **Windows x64 / KakaoTalk Beta 26.9.2.447 / Qt 6.10.3**  
